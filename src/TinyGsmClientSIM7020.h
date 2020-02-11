@@ -16,7 +16,11 @@
 
 #define TINY_GSM_MUX_COUNT 5
 
-#include "TinyGsmCommon.h"
+#include "TinyGsmModem.tpp"
+#include "TinyGsmGPRS.tpp"
+#include "TinyGsmTCP.tpp"
+#include "TinyGsmTime.tpp"
+#include "TinyGsmBattery.tpp"
 
 #define GSM_NL "\r\n"
 static const char GSM_OK[] TINY_GSM_PROGMEM        = "OK" GSM_NL;
@@ -33,10 +37,18 @@ enum RegStatus {
   REG_UNKNOWN      = 4,
 };
 
-class TinyGsmSim7020 : public TinyGsmModem<TinyGsmSim7020, READ_AND_CHECK_SIZE,
-                                           TINY_GSM_MUX_COUNT> {
-  friend class TinyGsmModem<TinyGsmSim7020, READ_AND_CHECK_SIZE,
-                            TINY_GSM_MUX_COUNT>;
+class TinyGsmSim7020 : public TinyGsmModem<TinyGsmSim7020>,
+                       public TinyGsmGPRS<TinyGsmSim7020>,
+                       public TinyGsmTCP<TinyGsmSim7020, READ_AND_CHECK_SIZE,
+                                         TINY_GSM_MUX_COUNT>,
+                       public TinyGsmTime<TinyGsmSim7020>,
+                       public TinyGsmBattery<TinyGsmSim7020> {
+  friend class TinyGsmModem<TinyGsmSim7020>;
+  friend class TinyGsmGPRS<TinyGsmSim7020>;
+  friend class TinyGsmTCP<TinyGsmSim7020, READ_AND_CHECK_SIZE,
+                          TINY_GSM_MUX_COUNT>;
+  friend class TinyGsmTime<TinyGsmSim7020>;
+  friend class TinyGsmBattery<TinyGsmSim7020>;
 
   /*
    * Inner Client
@@ -66,22 +78,14 @@ class TinyGsmSim7020 : public TinyGsmModem<TinyGsmSim7020, READ_AND_CHECK_SIZE,
     }
 
    public:
-    int connect(const char* host, uint16_t port, int timeout_s) {
+    virtual int connect(const char* host, uint16_t port, int timeout_s) {
       stop();
       TINY_GSM_YIELD();
       rx.clear();
       sock_connected = at->modemConnect(host, port, mux, false, timeout_s);
       return sock_connected;
     }
-    int connect(IPAddress ip, uint16_t port, int timeout_s) {
-      return connect(TinyGsmStringFromIp(ip).c_str(), port, timeout_s);
-    }
-    int connect(const char* host, uint16_t port) override {
-      return connect(host, port, 75);
-    }
-    int connect(IPAddress ip, uint16_t port) override {
-      return connect(ip, port, 75);
-    }
+    TINY_GSM_CLIENT_CONNECT_OVERRIDES
 
     virtual void stop(uint32_t maxWaitMs) {
       dumpModemBuffer(maxWaitMs);
@@ -220,12 +224,6 @@ class TinyGsmSim7020 : public TinyGsmModem<TinyGsmSim7020, READ_AND_CHECK_SIZE,
   }
 
   /*
-   * SIM card functions
-   */
- protected:
-  // Able to follow all SIM card functions as inherited from the template
-
-  /*
    * Generic network functions
    */
  public:
@@ -238,6 +236,19 @@ class TinyGsmSim7020 : public TinyGsmModem<TinyGsmSim7020, READ_AND_CHECK_SIZE,
     if (!testAT()) { return false; }
     RegStatus s = getRegistrationStatus();
     return (s == REG_OK_HOME || s == REG_OK_ROAMING);
+  }
+
+  String getLocalIPImpl() {
+    sendAT(GF("+IPADDR"));  // Inquire Socket PDP address
+    // sendAT(GF("+CGPADDR=1"));  // Show PDP address
+    String res;
+    if (waitResponse(10000L, res) != 1) {
+      return "";
+    }
+    res.replace(GSM_NL "OK" GSM_NL, "");
+    res.replace(GSM_NL, "");
+    res.trim();
+    return res;
   }
 
   /*
@@ -330,19 +341,10 @@ class TinyGsmSim7020 : public TinyGsmModem<TinyGsmSim7020, READ_AND_CHECK_SIZE,
   }
 
   /*
-   * IP Address functions
+   * SIM card functions
    */
  protected:
-  String getLocalIPImpl() {
-    sendAT(GF("+IPADDR"));  // Inquire Socket PDP address
-    // sendAT(GF("+CGPADDR=1"));  // Show PDP address
-    String res;
-    if (waitResponse(10000L, res) != 1) { return ""; }
-    res.replace(GSM_NL "OK" GSM_NL, "");
-    res.replace(GSM_NL, "");
-    res.trim();
-    return res;
-  }
+  // Able to follow all SIM card functions as inherited from the template
 
   /*
    * Phone Call functions
@@ -372,12 +374,6 @@ class TinyGsmSim7020 : public TinyGsmModem<TinyGsmSim7020, READ_AND_CHECK_SIZE,
  protected:
   // TODO(bsorgo): verify that this is not available
   String getGsmLocationImpl() TINY_GSM_ATTR_NOT_AVAILABLE;
-
-  /*
-   * GPS location functions
-   */
- public:
-  // No functions of this type supported
 
   /*
    * Time functions
@@ -423,8 +419,6 @@ class TinyGsmSim7020 : public TinyGsmModem<TinyGsmSim7020, READ_AND_CHECK_SIZE,
     waitResponse();
     return true;
   }
-
-  float getTemperatureImpl() TINY_GSM_ATTR_NOT_AVAILABLE;
 
   /*
    * Client related functions
