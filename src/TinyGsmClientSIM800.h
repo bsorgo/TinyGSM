@@ -15,7 +15,15 @@
 
 #define TINY_GSM_MUX_COUNT 5
 
-#include "TinyGsmCommon.h"
+#include "TinyGsmBattery.tpp"
+#include "TinyGsmCalling.tpp"
+#include "TinyGsmGPRS.tpp"
+#include "TinyGsmGSMLocation.tpp"
+#include "TinyGsmModem.tpp"
+#include "TinyGsmSMS.tpp"
+#include "TinyGsmSSL.tpp"
+#include "TinyGsmTCP.tpp"
+#include "TinyGsmTime.tpp"
 
 #define GSM_NL "\r\n"
 static const char GSM_OK[] TINY_GSM_PROGMEM        = "OK" GSM_NL;
@@ -31,10 +39,26 @@ enum RegStatus {
   REG_OK_ROAMING   = 5,
   REG_UNKNOWN      = 4,
 };
-class TinyGsmSim800 : public TinyGsmModem<TinyGsmSim800, READ_AND_CHECK_SIZE,
-                                          TINY_GSM_MUX_COUNT> {
-  friend class TinyGsmModem<TinyGsmSim800, READ_AND_CHECK_SIZE,
-                            TINY_GSM_MUX_COUNT>;
+class TinyGsmSim800
+    : public TinyGsmModem<TinyGsmSim800>,
+      public TinyGsmGPRS<TinyGsmSim800>,
+      public TinyGsmTCP<TinyGsmSim800, READ_AND_CHECK_SIZE, TINY_GSM_MUX_COUNT>,
+      public TinyGsmSSL<TinyGsmSim800>,
+      public TinyGsmCalling<TinyGsmSim800>,
+      public TinyGsmSMS<TinyGsmSim800>,
+      public TinyGsmGSMLocation<TinyGsmSim800>,
+      public TinyGsmTime<TinyGsmSim800>,
+      public TinyGsmBattery<TinyGsmSim800> {
+  friend class TinyGsmModem<TinyGsmSim800>;
+  friend class TinyGsmGPRS<TinyGsmSim800>;
+  friend class TinyGsmTCP<TinyGsmSim800, READ_AND_CHECK_SIZE,
+                          TINY_GSM_MUX_COUNT>;
+  friend class TinyGsmSSL<TinyGsmSim800>;
+  friend class TinyGsmCalling<TinyGsmSim800>;
+  friend class TinyGsmSMS<TinyGsmSim800>;
+  friend class TinyGsmGSMLocation<TinyGsmSim800>;
+  friend class TinyGsmTime<TinyGsmSim800>;
+  friend class TinyGsmBattery<TinyGsmSim800>;
 
   /*
    * Inner Client
@@ -64,24 +88,16 @@ class TinyGsmSim800 : public TinyGsmModem<TinyGsmSim800, READ_AND_CHECK_SIZE,
     }
 
    public:
-    int connect(const char* host, uint16_t port, int timeout_s) {
+    virtual int connect(const char* host, uint16_t port, int timeout_s) {
       stop();
       TINY_GSM_YIELD();
       rx.clear();
       sock_connected = at->modemConnect(host, port, mux, false, timeout_s);
       return sock_connected;
     }
-    int connect(IPAddress ip, uint16_t port, int timeout_s) {
-      return connect(TinyGsmStringFromIp(ip).c_str(), port, timeout_s);
-    }
-    int connect(const char* host, uint16_t port) override {
-      return connect(host, port, 75);
-    }
-    int connect(IPAddress ip, uint16_t port) override {
-      return connect(ip, port, 75);
-    }
+    TINY_GSM_CLIENT_CONNECT_OVERRIDES
 
-    void stop(uint32_t maxWaitMs) {
+    virtual void stop(uint32_t maxWaitMs) {
       dumpModemBuffer(maxWaitMs);
       at->sendAT(GF("+CIPCLOSE="), mux, GF(",1"));  // Quick close
       sock_connected = false;
@@ -110,13 +126,14 @@ class TinyGsmSim800 : public TinyGsmModem<TinyGsmSim800, READ_AND_CHECK_SIZE,
         : GsmClientSim800(modem, mux) {}
 
    public:
-    int connect(const char* host, uint16_t port, int timeout_s) {
+    int connect(const char* host, uint16_t port, int timeout_s) override {
       stop();
       TINY_GSM_YIELD();
       rx.clear();
       sock_connected = at->modemConnect(host, port, mux, true, timeout_s);
       return sock_connected;
     }
+    TINY_GSM_CLIENT_CONNECT_OVERRIDES
   };
 
   /*
@@ -206,23 +223,17 @@ class TinyGsmSim800 : public TinyGsmModem<TinyGsmSim800, READ_AND_CHECK_SIZE,
     return waitResponse() == 1;
   }
 
-  bool thisHasSSL() {
-#if defined(TINY_GSM_MODEM_SIM900)
-    return false;
-#else
-    sendAT(GF("+CIPSSL=?"));
-    if (waitResponse(GF(GSM_NL "+CIPSSL:")) != 1) { return false; }
-    return waitResponse() == 1;
-#endif
-  }
-
-  bool thisHasWifi() {
-    return false;
-  }
-
-  bool thisHasGPRS() {
-    return true;
-  }
+  /*
+    bool thisHasSSL() {
+  #if defined(TINY_GSM_MODEM_SIM900)
+      return false;
+  #else
+      sendAT(GF("+CIPSSL=?"));
+      if (waitResponse(GF(GSM_NL "+CIPSSL:")) != 1) { return false; }
+      return waitResponse() == 1;
+  #endif
+    }
+    */
 
   /*
    * Power functions
@@ -255,12 +266,6 @@ class TinyGsmSim800 : public TinyGsmModem<TinyGsmSim800, READ_AND_CHECK_SIZE,
   }
 
   /*
-   * SIM card functions
-   */
- protected:
-  // Able to follow all SIM card functions as inherited from the template
-
-  /*
    * Generic network functions
    */
  public:
@@ -272,6 +277,16 @@ class TinyGsmSim800 : public TinyGsmModem<TinyGsmSim800, READ_AND_CHECK_SIZE,
   bool isNetworkConnectedImpl() {
     RegStatus s = getRegistrationStatus();
     return (s == REG_OK_HOME || s == REG_OK_ROAMING);
+  }
+
+  String getLocalIPImpl() {
+    sendAT(GF("+CIFSR;E0"));
+    String res;
+    if (waitResponse(10000L, res) != 1) { return ""; }
+    res.replace(GSM_NL "OK" GSM_NL, "");
+    res.replace(GSM_NL, "");
+    res.trim();
+    return res;
   }
 
   /*
@@ -364,18 +379,10 @@ class TinyGsmSim800 : public TinyGsmModem<TinyGsmSim800, READ_AND_CHECK_SIZE,
   }
 
   /*
-   * IP Address functions
+   * SIM card functions
    */
  protected:
-  String getLocalIPImpl() {
-    sendAT(GF("+CIFSR;E0"));
-    String res;
-    if (waitResponse(10000L, res) != 1) { return ""; }
-    res.replace(GSM_NL "OK" GSM_NL, "");
-    res.replace(GSM_NL, "");
-    res.trim();
-    return res;
-  }
+  // Able to follow all SIM card functions as inherited from the template
 
   /*
    * Phone Call functions
@@ -398,10 +405,11 @@ class TinyGsmSim800 : public TinyGsmModem<TinyGsmSim800, READ_AND_CHECK_SIZE,
  protected:
   // Can return a location from CIPGSMLOC as per the template
 
+
   /*
    * GPS location functions
    */
- public:
+ protected:
   // No functions of this type supported
 
   /*
@@ -411,10 +419,10 @@ class TinyGsmSim800 : public TinyGsmModem<TinyGsmSim800, READ_AND_CHECK_SIZE,
   // Can follow the standard CCLK function in the template
 
   /*
-   * Battery & temperature functions
+   * Battery functions
    */
  protected:
-  float getTemperatureImpl() TINY_GSM_ATTR_NOT_AVAILABLE;
+  // Follows all battery functions per template
 
   /*
    * NTP server functions
@@ -490,7 +498,7 @@ class TinyGsmSim800 : public TinyGsmModem<TinyGsmSim800, READ_AND_CHECK_SIZE,
     stream.flush();
     if (waitResponse(GF(GSM_NL "DATA ACCEPT:")) != 1) { return 0; }
     streamSkipUntil(',');  // Skip mux
-    return stream.readStringUntil('\n').toInt();
+    return streamGetInt('\n');
   }
 
   size_t modemRead(size_t size, uint8_t mux) {
@@ -503,9 +511,9 @@ class TinyGsmSim800 : public TinyGsmModem<TinyGsmSim800, READ_AND_CHECK_SIZE,
 #endif
     streamSkipUntil(',');  // Skip Rx mode 2/normal or 3/HEX
     streamSkipUntil(',');  // Skip mux
-    int len_requested = stream.readStringUntil(',').toInt();
+    int len_requested = streamGetInt(',');
     //  ^^ Requested number of data bytes (1-1460 bytes)to be read
-    int len_confirmed = stream.readStringUntil('\n').toInt();
+    int len_confirmed = streamGetInt('\n');
     // ^^ Confirmed number of data bytes to be read, which may be less than
     // requested. 0 indicates that no data can be read. This is actually be the
     // number of bytes that will be remaining after the read
@@ -544,7 +552,7 @@ class TinyGsmSim800 : public TinyGsmModem<TinyGsmSim800, READ_AND_CHECK_SIZE,
     if (waitResponse(GF("+CIPRXGET:")) == 1) {
       streamSkipUntil(',');  // Skip mode 4
       streamSkipUntil(',');  // Skip mux
-      result = stream.readStringUntil('\n').toInt();
+      result = streamGetInt('\n');
       waitResponse();
     }
     DBG("### Available:", result, "on", mux);
@@ -595,6 +603,9 @@ class TinyGsmSim800 : public TinyGsmModem<TinyGsmSim800, READ_AND_CHECK_SIZE,
           index = 2;
           goto finish;
         } else if (r3 && data.endsWith(r3)) {
+          if (r3 == GFP(GSM_CME_ERROR)) {
+            streamSkipUntil('\n');  // Read out the error
+          }
           index = 3;
           goto finish;
         } else if (r4 && data.endsWith(r4)) {
@@ -604,9 +615,9 @@ class TinyGsmSim800 : public TinyGsmModem<TinyGsmSim800, READ_AND_CHECK_SIZE,
           index = 5;
           goto finish;
         } else if (data.endsWith(GF(GSM_NL "+CIPRXGET:"))) {
-          String mode = stream.readStringUntil(',');
-          if (mode.toInt() == 1) {
-            int mux = stream.readStringUntil('\n').toInt();
+          int mode = streamGetInt(',');
+          if (mode == 1) {
+            int mux = streamGetInt('\n');
             if (mux >= 0 && mux < TINY_GSM_MUX_COUNT && sockets[mux]) {
               sockets[mux]->got_data = true;
             }
@@ -616,8 +627,8 @@ class TinyGsmSim800 : public TinyGsmModem<TinyGsmSim800, READ_AND_CHECK_SIZE,
             data += mode;
           }
         } else if (data.endsWith(GF(GSM_NL "+RECEIVE:"))) {
-          int mux = stream.readStringUntil(',').toInt();
-          int len = stream.readStringUntil('\n').toInt();
+          int mux = streamGetInt(',');
+          int len = streamGetInt('\n');
           if (mux >= 0 && mux < TINY_GSM_MUX_COUNT && sockets[mux]) {
             sockets[mux]->got_data       = true;
             sockets[mux]->sock_available = len;

@@ -14,7 +14,15 @@
 
 #define TINY_GSM_MUX_COUNT 7
 
-#include "TinyGsmCommon.h"
+#include "TinyGsmBattery.tpp"
+#include "TinyGsmGPRS.tpp"
+#include "TinyGsmGSMLocation.tpp"
+#include "TinyGsmModem.tpp"
+#include "TinyGsmSMS.tpp"
+#include "TinyGsmSSL.tpp"
+#include "TinyGsmTCP.tpp"
+#include "TinyGsmTemperature.tpp"
+#include "TinyGsmTime.tpp"
 
 #define GSM_NL "\r\n"
 static const char GSM_OK[] TINY_GSM_PROGMEM        = "OK" GSM_NL;
@@ -31,10 +39,26 @@ enum RegStatus {
   REG_UNKNOWN      = 4,
 };
 
-class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
-                                          TINY_GSM_MUX_COUNT> {
-  friend class TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
-                            TINY_GSM_MUX_COUNT>;
+class TinyGsmSaraR4
+    : public TinyGsmModem<TinyGsmSaraR4>,
+      public TinyGsmGPRS<TinyGsmSaraR4>,
+      public TinyGsmTCP<TinyGsmSaraR4, READ_AND_CHECK_SIZE, TINY_GSM_MUX_COUNT>,
+      public TinyGsmSSL<TinyGsmSaraR4>,
+      public TinyGsmBattery<TinyGsmSaraR4>,
+      public TinyGsmGSMLocation<TinyGsmSaraR4>,
+      public TinyGsmSMS<TinyGsmSaraR4>,
+      public TinyGsmTemperature<TinyGsmSaraR4>,
+      public TinyGsmTime<TinyGsmSaraR4> {
+  friend class TinyGsmModem<TinyGsmSaraR4>;
+  friend class TinyGsmGPRS<TinyGsmSaraR4>;
+  friend class TinyGsmTCP<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
+                          TINY_GSM_MUX_COUNT>;
+  friend class TinyGsmSSL<TinyGsmSaraR4>;
+  friend class TinyGsmBattery<TinyGsmSaraR4>;
+  friend class TinyGsmGSMLocation<TinyGsmSaraR4>;
+  friend class TinyGsmSMS<TinyGsmSaraR4>;
+  friend class TinyGsmTemperature<TinyGsmSaraR4>;
+  friend class TinyGsmTime<TinyGsmSaraR4>;
 
   /*
    * Inner Client
@@ -64,7 +88,7 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
     }
 
    public:
-    int connect(const char* host, uint16_t port, int timeout_s) {
+    virtual int connect(const char* host, uint16_t port, int timeout_s) {
       stop();
       TINY_GSM_YIELD();
       rx.clear();
@@ -80,7 +104,7 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
 
       return sock_connected;
     }
-    int connect(IPAddress ip, uint16_t port, int timeout_s) {
+    virtual int connect(IPAddress ip, uint16_t port, int timeout_s) {
       return connect(TinyGsmStringFromIp(ip).c_str(), port, timeout_s);
     }
     int connect(const char* host, uint16_t port) override {
@@ -90,7 +114,7 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
       return connect(ip, port, 120);
     }
 
-    void stop(uint32_t maxWaitMs) {
+    virtual void stop(uint32_t maxWaitMs) {
       uint32_t startMillis = millis();
       dumpModemBuffer(maxWaitMs);
       // We want to use an async socket close because the syncrhonous close of
@@ -144,7 +168,7 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
         : GsmClientSaraR4(modem, mux) {}
 
    public:
-    int connect(const char* host, uint16_t port, int timeout_s) {
+    int connect(const char* host, uint16_t port, int timeout_s) override {
       stop();
       TINY_GSM_YIELD();
       rx.clear();
@@ -157,6 +181,15 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
       at->sockets[mux] = this;
       at->maintain();
       return sock_connected;
+    }
+    virtual int connect(IPAddress ip, uint16_t port, int timeout_s) {
+      return connect(TinyGsmStringFromIp(ip).c_str(), port, timeout_s);
+    }
+    int connect(const char* host, uint16_t port) override {
+      return connect(host, port, 120);
+    }
+    int connect(IPAddress ip, uint16_t port) override {
+      return connect(ip, port, 120);
     }
   };
 
@@ -249,18 +282,6 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
     return waitResponse() == 1;
   }
 
-  bool thisHasSSL() {
-    return true;
-  }
-
-  bool thisHasWifi() {
-    return false;
-  }
-
-  bool thisHasGPRS() {
-    return true;
-  }
-
   /*
    * Power functions
    */
@@ -282,20 +303,6 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
   bool sleepEnableImpl(bool enable = true) TINY_GSM_ATTR_NOT_AVAILABLE;
 
   /*
-   * SIM card functions
-   */
- protected:
-  // This uses "CGSN" instead of "GSN"
-  String getIMEIImpl() {
-    sendAT(GF("+CGSN"));
-    if (waitResponse(GF(GSM_NL)) != 1) { return ""; }
-    String res = stream.readStringUntil('\n');
-    waitResponse();
-    res.trim();
-    return res;
-  }
-
-  /*
    * Generic network functions
    */
  public:
@@ -304,7 +311,7 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
     sendAT(GF("+CEREG?"));
     if (waitResponse(GF(GSM_NL "+CEREG:")) != 1) { return REG_UNKNOWN; }
     streamSkipUntil(','); /* Skip format (0) */
-    int status = stream.readStringUntil('\n').toInt();
+    int status = streamGetInt('\n');
     waitResponse();
 
     // If we're connected on EPS, great!
@@ -316,7 +323,7 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
       sendAT(GF("+CREG?"));
       if (waitResponse(GF(GSM_NL "+CREG:")) != 1) { return REG_UNKNOWN; }
       streamSkipUntil(','); /* Skip format (0) */
-      status = stream.readStringUntil('\n').toInt();
+      status = streamGetInt('\n');
       waitResponse();
       return (RegStatus)status;
     }
@@ -393,22 +400,18 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
   }
 
   /*
-   * IP Address functions
+   * SIM card functions
    */
  protected:
-  // Can follow the template in all function
-
-  /*
-   * Phone Call functions
-   */
- protected:
-  // While the AT commands for call answer and hang-up are nominally supported,
-  // no voice calls are supported rendering them meaningless
-  bool callAnswerImpl() TINY_GSM_ATTR_NOT_AVAILABLE;
-  bool callNumberImpl(const String& number) TINY_GSM_ATTR_NOT_AVAILABLE;
-  bool callHangupImpl() TINY_GSM_ATTR_NOT_AVAILABLE;
-  bool dtmfSendImpl(char cmd,
-                    int  duration_ms = 100) TINY_GSM_ATTR_NOT_AVAILABLE;
+  // This uses "CGSN" instead of "GSN"
+  String getIMEIImpl() {
+    sendAT(GF("+CGSN"));
+    if (waitResponse(GF(GSM_NL)) != 1) { return ""; }
+    String res = stream.readStringUntil('\n');
+    waitResponse();
+    res.trim();
+    return res;
+  }
 
   /*
    * Messaging functions
@@ -434,7 +437,7 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
   /*
    * GPS location functions
    */
- public:
+ protected:
   // No functions of this type supported
 
   /*
@@ -444,7 +447,7 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
   // Can follow the standard CCLK function in the template
 
   /*
-   * Battery & temperature functions
+   * Battery functions
    */
  protected:
   uint16_t getBattVoltageImpl() TINY_GSM_ATTR_NOT_AVAILABLE;
@@ -453,7 +456,7 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
     sendAT(GF("+CIND?"));
     if (waitResponse(GF(GSM_NL "+CIND:")) != 1) { return 0; }
 
-    int    res     = stream.readStringUntil(',').toInt();
+    int    res     = streamGetInt(',');
     int8_t percent = res * 20;  // return is 0-5
     // Wait for final OK
     waitResponse();
@@ -470,6 +473,10 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
     return true;
   }
 
+  /*
+   * Temperature functions
+   */
+
   float getTemperatureImpl() {
     // First make sure the temperature is set to be in celsius
     sendAT(GF("+UTEMP=0"));  // Would use 1 for Fahrenheit
@@ -478,7 +485,7 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
     if (waitResponse(GF(GSM_NL "+UTEMP:")) != 1) {
       return static_cast<float>(-9999);
     }
-    int16_t res  = stream.readStringUntil('\n').toInt();
+    int16_t res  = streamGetInt('\n');
     float   temp = -9999;
     if (res != -1) { temp = (static_cast<float>(res)) / 10; }
     return temp;
@@ -497,7 +504,7 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
     sendAT(GF("+USOCR=6"));
     // reply is +USOCR: ## of socket created
     if (waitResponse(GF(GSM_NL "+USOCR:")) != 1) { return false; }
-    *mux = stream.readStringUntil('\n').toInt();
+    *mux = streamGetInt('\n');
     waitResponse();
 
     if (ssl) {
@@ -531,8 +538,8 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
       sendAT(GF("+USOCO="), *mux, ",\"", host, "\",", port, ",1");
       if (waitResponse(timeout_ms - (millis() - startMillis),
                        GF(GSM_NL "+UUSOCO:")) == 1) {
-        stream.readStringUntil(',').toInt();  // skip repeated mux
-        int connection_status = stream.readStringUntil('\n').toInt();
+        streamGetInt(',');  // skip repeated mux
+        int connection_status = streamGetInt('\n');
         DBG("### Waited", millis() - startMillis, "ms for socket to open");
         return (0 == connection_status);
       } else {
@@ -557,7 +564,7 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
     stream.flush();
     if (waitResponse(GF(GSM_NL "+USOWR:")) != 1) { return 0; }
     streamSkipUntil(',');  // Skip mux
-    int sent = stream.readStringUntil('\n').toInt();
+    int sent = streamGetInt('\n');
     waitResponse();  // sends back OK after the confirmation of number sent
     return sent;
   }
@@ -566,7 +573,7 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
     sendAT(GF("+USORD="), mux, ',', (uint16_t)size);
     if (waitResponse(GF(GSM_NL "+USORD:")) != 1) { return 0; }
     streamSkipUntil(',');  // Skip mux
-    int len = stream.readStringUntil(',').toInt();
+    int len = streamGetInt(',');
     streamSkipUntil('\"');
 
     for (int i = 0; i < len; i++) { moveCharFromStreamToFifo(mux); }
@@ -586,7 +593,7 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
     // that you have already told to close
     if (res == 1) {
       streamSkipUntil(',');  // Skip mux
-      result = stream.readStringUntil('\n').toInt();
+      result = streamGetInt('\n');
       // if (result) DBG("### DATA AVAILABLE:", result, "on", mux);
       waitResponse();
     }
@@ -603,7 +610,7 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
 
     streamSkipUntil(',');  // Skip mux
     streamSkipUntil(',');  // Skip type
-    int result = stream.readStringUntil('\n').toInt();
+    int result = streamGetInt('\n');
     // 0: the socket is in INACTIVE status (it corresponds to CLOSED status
     // defined in RFC793 "TCP Protocol Specification" [112])
     // 1: the socket is in LISTEN status
@@ -653,10 +660,10 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
           index = 2;
           goto finish;
         } else if (r3 && data.endsWith(r3)) {
-          index = 3;
           if (r3 == GFP(GSM_CME_ERROR)) {
             streamSkipUntil('\n');  // Read out the error
           }
+          index = 3;
           goto finish;
         } else if (r4 && data.endsWith(r4)) {
           index = 4;
@@ -665,8 +672,8 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
           index = 5;
           goto finish;
         } else if (data.endsWith(GF("+UUSORD:"))) {
-          int mux = stream.readStringUntil(',').toInt();
-          int len = stream.readStringUntil('\n').toInt();
+          int mux = streamGetInt(',');
+          int len = streamGetInt('\n');
           if (mux >= 0 && mux < TINY_GSM_MUX_COUNT && sockets[mux]) {
             sockets[mux]->got_data       = true;
             sockets[mux]->sock_available = len;
@@ -674,15 +681,15 @@ class TinyGsmSaraR4 : public TinyGsmModem<TinyGsmSaraR4, READ_AND_CHECK_SIZE,
           data = "";
           DBG("### URC Data Received:", len, "on", mux);
         } else if (data.endsWith(GF("+UUSOCL:"))) {
-          int mux = stream.readStringUntil('\n').toInt();
+          int mux = streamGetInt('\n');
           if (mux >= 0 && mux < TINY_GSM_MUX_COUNT && sockets[mux]) {
             sockets[mux]->sock_connected = false;
           }
           data = "";
           DBG("### URC Sock Closed: ", mux);
         } else if (data.endsWith(GF("+UUSOCO:"))) {
-          int mux          = stream.readStringUntil('\n').toInt();
-          int socket_error = stream.readStringUntil('\n').toInt();
+          int mux          = streamGetInt('\n');
+          int socket_error = streamGetInt('\n');
           if (mux >= 0 && mux < TINY_GSM_MUX_COUNT && sockets[mux] &&
               socket_error == 0) {
             sockets[mux]->sock_connected = true;

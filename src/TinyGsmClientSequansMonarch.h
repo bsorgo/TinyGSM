@@ -13,7 +13,14 @@
 
 #define TINY_GSM_MUX_COUNT 6
 
-#include "TinyGsmCommon.h"
+#include "TinyGsmCalling.tpp"
+#include "TinyGsmGPRS.tpp"
+#include "TinyGsmModem.tpp"
+#include "TinyGsmSMS.tpp"
+#include "TinyGsmSSL.tpp"
+#include "TinyGsmTCP.tpp"
+#include "TinyGsmTemperature.tpp"
+#include "TinyGsmTime.tpp"
 
 #define GSM_NL "\r\n"
 static const char GSM_OK[] TINY_GSM_PROGMEM        = "OK" GSM_NL;
@@ -41,10 +48,24 @@ enum SocketStatus {
 };
 
 class TinyGsmSequansMonarch
-    : public TinyGsmModem<TinyGsmSequansMonarch, READ_AND_CHECK_SIZE,
-                          TINY_GSM_MUX_COUNT> {
-  friend class TinyGsmModem<TinyGsmSequansMonarch, READ_AND_CHECK_SIZE,
-                            TINY_GSM_MUX_COUNT>;
+    : public TinyGsmModem<TinyGsmSequansMonarch>,
+      public TinyGsmGPRS<TinyGsmSequansMonarch>,
+      public TinyGsmTCP<TinyGsmSequansMonarch, READ_AND_CHECK_SIZE,
+                        TINY_GSM_MUX_COUNT>,
+      public TinyGsmSSL<TinyGsmSequansMonarch>,
+      public TinyGsmCalling<TinyGsmSequansMonarch>,
+      public TinyGsmSMS<TinyGsmSequansMonarch>,
+      public TinyGsmTime<TinyGsmSequansMonarch>,
+      public TinyGsmTemperature<TinyGsmSequansMonarch> {
+  friend class TinyGsmModem<TinyGsmSequansMonarch>;
+  friend class TinyGsmGPRS<TinyGsmSequansMonarch>;
+  friend class TinyGsmTCP<TinyGsmSequansMonarch, READ_AND_CHECK_SIZE,
+                          TINY_GSM_MUX_COUNT>;
+  friend class TinyGsmSSL<TinyGsmSequansMonarch>;
+  friend class TinyGsmCalling<TinyGsmSequansMonarch>;
+  friend class TinyGsmSMS<TinyGsmSequansMonarch>;
+  friend class TinyGsmTime<TinyGsmSequansMonarch>;
+  friend class TinyGsmTemperature<TinyGsmSequansMonarch>;
 
   /*
    * Inner Client
@@ -77,24 +98,16 @@ class TinyGsmSequansMonarch
     }
 
    public:
-    int connect(const char* host, uint16_t port, int timeout_s) {
+    virtual int connect(const char* host, uint16_t port, int timeout_s) {
       if (sock_connected) stop();
       TINY_GSM_YIELD();
       rx.clear();
       sock_connected = at->modemConnect(host, port, mux, false, timeout_s);
       return sock_connected;
     }
-    int connect(IPAddress ip, uint16_t port, int timeout_s) {
-      return connect(TinyGsmStringFromIp(ip).c_str(), port, timeout_s);
-    }
-    int connect(const char* host, uint16_t port) override {
-      return connect(host, port, 75);
-    }
-    int connect(IPAddress ip, uint16_t port) override {
-      return connect(ip, port, 75);
-    }
+    TINY_GSM_CLIENT_CONNECT_OVERRIDES
 
-    void stop(uint32_t maxWaitMs) {
+    virtual void stop(uint32_t maxWaitMs) {
       dumpModemBuffer(maxWaitMs);
       at->sendAT(GF("+SQNSH="), mux);
       sock_connected = false;
@@ -127,7 +140,7 @@ class TinyGsmSequansMonarch
     bool strictSSL = false;
 
    public:
-    int connect(const char* host, uint16_t port, int timeout_s) {
+    int connect(const char* host, uint16_t port, int timeout_s) override {
       stop();
       TINY_GSM_YIELD();
       rx.clear();
@@ -153,6 +166,7 @@ class TinyGsmSequansMonarch
       sock_connected = at->modemConnect(host, port, mux, true, timeout_s);
       return sock_connected;
     }
+    TINY_GSM_CLIENT_CONNECT_OVERRIDES
 
     void setStrictSSL(bool strict) {
       strictSSL = strict;
@@ -225,18 +239,6 @@ class TinyGsmSequansMonarch
     while (stream.available()) { waitResponse(15, NULL, NULL); }
   }
 
-  bool thisHasGPRS() {
-    return true;
-  }
-
-  bool thisHasWifi() {
-    return false;
-  }
-
-  bool thisHasSSL() {
-    return true;
-  }
-
   /*
    * Power functions
    */
@@ -275,19 +277,6 @@ class TinyGsmSequansMonarch
   }
 
   /*
-   * SIM card functions
-   */
- protected:
-  String getSimCCIDImpl() {
-    sendAT(GF("+SQNCCID"));
-    if (waitResponse(GF(GSM_NL "+SQNCCID:")) != 1) { return ""; }
-    String res = stream.readStringUntil('\n');
-    waitResponse();
-    res.trim();
-    return res;
-  }
-
-  /*
    * Generic network functions
    */
  public:
@@ -299,6 +288,13 @@ class TinyGsmSequansMonarch
   bool isNetworkConnectedImpl() {
     RegStatus s = getRegistrationStatus();
     return (s == REG_OK_HOME || s == REG_OK_ROAMING);
+  }
+  String getLocalIPImpl() {
+    sendAT(GF("+CGPADDR=3"));
+    if (waitResponse(10000L, GF("+CGPADDR: 3,\"")) != 1) { return ""; }
+    String res = stream.readStringUntil('\"');
+    waitResponse();
+    return res;
   }
 
   /*
@@ -338,14 +334,15 @@ class TinyGsmSequansMonarch
   }
 
   /*
-   * IP Address functions
+   * SIM card functions
    */
  protected:
-  String getLocalIPImpl() {
-    sendAT(GF("+CGPADDR=3"));
-    if (waitResponse(10000L, GF("+CGPADDR: 3,\"")) != 1) { return ""; }
-    String res = stream.readStringUntil('\"');
+  String getSimCCIDImpl() {
+    sendAT(GF("+SQNCCID"));
+    if (waitResponse(GF(GSM_NL "+SQNCCID:")) != 1) { return ""; }
+    String res = stream.readStringUntil('\n');
     waitResponse();
+    res.trim();
     return res;
   }
 
@@ -364,32 +361,14 @@ class TinyGsmSequansMonarch
   // Follows all messaging functions per template
 
   /*
-   * Location functions
-   */
- protected:
-  String getGsmLocationImpl() TINY_GSM_ATTR_NOT_AVAILABLE;
-
-  /*
-   * GPS location functions
-   */
- public:
-  // No functions of this type supported
-
-  /*
    * Time functions
    */
  protected:
   // Can follow the standard CCLK function in the template
 
   /*
-   * Battery & temperature functions
+   * Temperature functions
    */
- protected:
-  uint16_t getBattVoltageImpl() TINY_GSM_ATTR_NOT_AVAILABLE;
-  int8_t   getBattPercentImpl() TINY_GSM_ATTR_NOT_AVAILABLE;
-  uint8_t  getBattChargeStateImpl() TINY_GSM_ATTR_NOT_AVAILABLE;
-  bool     getBattStatsImpl(uint8_t& chargeState, int8_t& percent,
-                            uint16_t& milliVolts) TINY_GSM_ATTR_NOT_AVAILABLE;
 
   float getTemperatureImpl() {
     sendAT(GF("+SMDTH"));
@@ -517,7 +496,7 @@ class TinyGsmSequansMonarch
     sendAT(GF("+SQNSRECV="), mux, ',', (uint16_t)size);
     if (waitResponse(GF("+SQNSRECV: ")) != 1) { return 0; }
     streamSkipUntil(',');  // Skip mux
-    int len = stream.readStringUntil('\n').toInt();
+    int len = streamGetInt('\n');
     for (int i = 0; i < len; i++) {
       uint32_t startMillis = millis();
       while (!stream.available() &&
@@ -538,10 +517,10 @@ class TinyGsmSequansMonarch
     sendAT(GF("+SQNSI="), mux);
     size_t result = 0;
     if (waitResponse(GF("+SQNSI:")) == 1) {
-      streamSkipUntil(',');                          // Skip mux
-      streamSkipUntil(',');                          // Skip total sent
-      streamSkipUntil(',');                          // Skip total received
-      result = stream.readStringUntil(',').toInt();  // keep data not yet read
+      streamSkipUntil(',');        // Skip mux
+      streamSkipUntil(',');        // Skip total sent
+      streamSkipUntil(',');        // Skip total received
+      result = streamGetInt(',');  // keep data not yet read
       waitResponse();
     }
     DBG("### Available:", result, "on", mux);
@@ -555,7 +534,7 @@ class TinyGsmSequansMonarch
     for (int muxNo = 1; muxNo <= TINY_GSM_MUX_COUNT; muxNo++) {
       if (waitResponse(GFP(GSM_OK), GF(GSM_NL "+SQNSS: ")) != 2) { break; }
       uint8_t status = 0;
-      // if (stream.readStringUntil(',').toInt() != muxNo) { // check the mux no
+      // if (streamGetInt(',') != muxNo) { // check the mux no
       //   DBG("### Warning: misaligned mux numbers!");
       // }
       streamSkipUntil(',');        // skip mux [use muxNo]
@@ -611,6 +590,9 @@ class TinyGsmSequansMonarch
           index = 2;
           goto finish;
         } else if (r3 && data.endsWith(r3)) {
+          if (r3 == GFP(GSM_CME_ERROR)) {
+            streamSkipUntil('\n');  // Read out the error
+          }
           index = 3;
           goto finish;
         } else if (r4 && data.endsWith(r4)) {
@@ -620,8 +602,8 @@ class TinyGsmSequansMonarch
           index = 5;
           goto finish;
         } else if (data.endsWith(GF(GSM_NL "+SQNSRING:"))) {
-          int mux = stream.readStringUntil(',').toInt();
-          int len = stream.readStringUntil('\n').toInt();
+          int mux = streamGetInt(',');
+          int len = streamGetInt('\n');
           if (mux >= 0 && mux < TINY_GSM_MUX_COUNT &&
               sockets[mux % TINY_GSM_MUX_COUNT]) {
             sockets[mux % TINY_GSM_MUX_COUNT]->got_data       = true;
@@ -630,7 +612,7 @@ class TinyGsmSequansMonarch
           data = "";
           DBG("### URC Data Received:", len, "on", mux);
         } else if (data.endsWith(GF("SQNSH: "))) {
-          int mux = stream.readStringUntil('\n').toInt();
+          int mux = streamGetInt('\n');
           if (mux >= 0 && mux < TINY_GSM_MUX_COUNT &&
               sockets[mux % TINY_GSM_MUX_COUNT]) {
             sockets[mux % TINY_GSM_MUX_COUNT]->sock_connected = false;

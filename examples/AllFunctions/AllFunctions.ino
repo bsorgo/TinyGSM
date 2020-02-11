@@ -126,7 +126,7 @@ void setup() {
 
   // Set GSM module baud rate
   TinyGsmAutoBaud(SerialAT,GSM_AUTOBAUD_MIN,GSM_AUTOBAUD_MAX);
-  //SerialAT.begin(9600);
+  //SerialAT.begin(115200);
   delay(3000);
 }
 
@@ -174,7 +174,7 @@ void loop() {
 #endif
 
   DBG("Waiting for network...");
-  if (!modem.waitForNetwork()) {
+  if (!modem.waitForNetwork(600000L)) {
     delay(10000);
     return;
   }
@@ -245,9 +245,9 @@ void loop() {
     stream.print(F("Привіііт! Print number: "));
     stream.print(595);
     res = modem.sendSMS_UTF8_end();
-  } 
+  }
   DBG("UTF8 SMS:", res ? "OK" : "fail");
-  
+
 #endif
 
 #if TINY_GSM_TEST_CALL && defined(CALL_TARGET)

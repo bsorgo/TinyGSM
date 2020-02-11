@@ -14,7 +14,14 @@
 
 #define TINY_GSM_MUX_COUNT 8
 
-#include "TinyGsmCommon.h"
+#include "TinyGsmBattery.tpp"
+#include "TinyGsmGPRS.tpp"
+#include "TinyGsmGPS.tpp"
+#include "TinyGsmGSMLocation.tpp"
+#include "TinyGsmModem.tpp"
+#include "TinyGsmSMS.tpp"
+#include "TinyGsmTCP.tpp"
+#include "TinyGsmTime.tpp"
 
 #define GSM_NL "\r\n"
 static const char GSM_OK[] TINY_GSM_PROGMEM        = "OK" GSM_NL;
@@ -31,10 +38,24 @@ enum RegStatus {
   REG_UNKNOWN      = 4,
 };
 
-class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
-                                           TINY_GSM_MUX_COUNT> {
-  friend class TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
-                            TINY_GSM_MUX_COUNT>;
+class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000>,
+                       public TinyGsmGPRS<TinyGsmSim7000>,
+                       public TinyGsmTCP<TinyGsmSim7000, READ_AND_CHECK_SIZE,
+                                         TINY_GSM_MUX_COUNT>,
+                       public TinyGsmSMS<TinyGsmSim7000>,
+                       public TinyGsmGSMLocation<TinyGsmSim7000>,
+                       public TinyGsmGPS<TinyGsmSim7000>,
+                       public TinyGsmTime<TinyGsmSim7000>,
+                       public TinyGsmBattery<TinyGsmSim7000> {
+  friend class TinyGsmModem<TinyGsmSim7000>;
+  friend class TinyGsmGPRS<TinyGsmSim7000>;
+  friend class TinyGsmTCP<TinyGsmSim7000, READ_AND_CHECK_SIZE,
+                          TINY_GSM_MUX_COUNT>;
+  friend class TinyGsmSMS<TinyGsmSim7000>;
+  friend class TinyGsmGSMLocation<TinyGsmSim7000>;
+  friend class TinyGsmGPS<TinyGsmSim7000>;
+  friend class TinyGsmTime<TinyGsmSim7000>;
+  friend class TinyGsmBattery<TinyGsmSim7000>;
 
   /*
    * Inner Client
@@ -64,24 +85,16 @@ class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
     }
 
    public:
-    int connect(const char* host, uint16_t port, int timeout_s) {
+    virtual int connect(const char* host, uint16_t port, int timeout_s) {
       stop();
       TINY_GSM_YIELD();
       rx.clear();
       sock_connected = at->modemConnect(host, port, mux, false, timeout_s);
       return sock_connected;
     }
-    int connect(IPAddress ip, uint16_t port, int timeout_s) {
-      return connect(TinyGsmStringFromIp(ip).c_str(), port, timeout_s);
-    }
-    int connect(const char* host, uint16_t port) override {
-      return connect(host, port, 75);
-    }
-    int connect(IPAddress ip, uint16_t port) override {
-      return connect(ip, port, 75);
-    }
+    TINY_GSM_CLIENT_CONNECT_OVERRIDES
 
-    void stop(uint32_t maxWaitMs) {
+    virtual void stop(uint32_t maxWaitMs) {
       dumpModemBuffer(maxWaitMs);
       at->sendAT(GF("+CIPCLOSE="), mux);
       sock_connected = false;
@@ -113,13 +126,14 @@ class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
     {}
 
   public:
-    int connect(const char* host, uint16_t port, int timeout_s) {
+    int connect(const char* host, uint16_t port, int timeout_s) override {
       stop();
       TINY_GSM_YIELD();
       rx.clear();
       sock_connected = at->modemConnect(host, port, mux, true, timeout_s);
       return sock_connected;
     }
+    TINY_GSM_CLIENT_CONNECT_OVERRIDES
   };
   */
 
@@ -187,18 +201,6 @@ class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
     return false;
   }
 
-  bool thisHasSSL() {
-    return false;  // TODO(?):  Module supports SSL, but not yet implemented
-  }
-
-  bool thisHasWifi() {
-    return false;
-  }
-
-  bool thisHasGPRS() {
-    return true;
-  }
-
   /*
    * Power functions
    */
@@ -225,12 +227,6 @@ class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
     sendAT(GF("+CSCLK="), enable);
     return waitResponse() == 1;
   }
-
-  /*
-   * SIM card functions
-   */
- protected:
-  // Able to follow all SIM card functions as inherited from the template
 
   /*
    * Generic network functions
@@ -276,6 +272,16 @@ class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
     if (waitResponse(GF(GSM_NL "+CMNB:")) != 1) { return "OK"; }
     String res = stream.readStringUntil('\n');
     waitResponse();
+    return res;
+  }
+
+  String getLocalIPImpl() {
+    sendAT(GF("+CIFSR;E0"));
+    String res;
+    if (waitResponse(10000L, res) != 1) { return ""; }
+    res.replace(GSM_NL "OK" GSM_NL, "");
+    res.replace(GSM_NL, "");
+    res.trim();
     return res;
   }
 
@@ -365,28 +371,10 @@ class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
   }
 
   /*
-   * IP Address functions
+   * SIM card functions
    */
  protected:
-  String getLocalIPImpl() {
-    sendAT(GF("+CIFSR;E0"));
-    String res;
-    if (waitResponse(10000L, res) != 1) { return ""; }
-    res.replace(GSM_NL "OK" GSM_NL, "");
-    res.replace(GSM_NL, "");
-    res.trim();
-    return res;
-  }
-
-  /*
-   * Phone Call functions
-   */
- protected:
-  bool callAnswerImpl() TINY_GSM_ATTR_NOT_IMPLEMENTED;
-  bool callNumberImpl(const String& number) TINY_GSM_ATTR_NOT_IMPLEMENTED;
-  bool callHangupImpl() TINY_GSM_ATTR_NOT_IMPLEMENTED;
-  bool dtmfSendImpl(char cmd,
-                    int  duration_ms = 100) TINY_GSM_ATTR_NOT_IMPLEMENTED;
+  // Able to follow all SIM card functions as inherited from the template
 
   /*
    * Messaging functions
@@ -400,25 +388,26 @@ class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
  protected:
   // Can return a location from CIPGSMLOC as per the template
 
+
   /*
    * GPS location functions
    */
- public:
+ protected:
   // enable GPS
-  bool enableGPS() {
+  bool enableGPSImpl() {
     sendAT(GF("+CGNSPWR=1"));
     if (waitResponse() != 1) { return false; }
     return true;
   }
 
-  bool disableGPS() {
+  bool disableGPSImpl() {
     sendAT(GF("+CGNSPWR=0"));
     if (waitResponse() != 1) { return false; }
     return true;
   }
 
   // get the RAW GPS output
-  String getGPSraw() {
+  String getGPSrawImpl() {
     sendAT(GF("+CGNSINF"));
     if (waitResponse(GF(GSM_NL "+CGNSINF:")) != 1) { return ""; }
     String res = stream.readStringUntil('\n');
@@ -428,46 +417,43 @@ class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
   }
 
   // get GPS informations
-  bool getGPS(float* lat, float* lon, float* speed = 0, int* alt = 0,
-              int* vsat = 0, int* usat = 0) {
+  bool getGPSImpl(float* lat, float* lon, float* speed = 0, int* alt = 0,
+                  int* vsat = 0, int* usat = 0) {
     // String buffer = "";
     bool fix = false;
 
     sendAT(GF("+CGNSINF"));
     if (waitResponse(GF(GSM_NL "+CGNSINF:")) != 1) { return false; }
 
-    stream.readStringUntil(',');  // mode
-    if (stream.readStringUntil(',').toInt() == 1) fix = true;
-    stream.readStringUntil(',');                                    // utctime
-    *lat = stream.readStringUntil(',').toFloat();                   // lat
-    *lon = stream.readStringUntil(',').toFloat();                   // lon
-    if (alt != NULL) *alt = stream.readStringUntil(',').toFloat();  // lon
-    if (speed != NULL) *speed = stream.readStringUntil(',').toFloat();  // speed
-    stream.readStringUntil(',');
-    stream.readStringUntil(',');
-    stream.readStringUntil(',');
-    stream.readStringUntil(',');
-    stream.readStringUntil(',');
-    stream.readStringUntil(',');
-    stream.readStringUntil(',');
-    if (vsat != NULL)
-      *vsat = stream.readStringUntil(',').toInt();  // viewed satelites
-    if (usat != NULL)
-      *usat = stream.readStringUntil(',').toInt();  // used satelites
-    stream.readStringUntil('\n');
+    streamSkipUntil(',');                             // GNSS run status
+    if (streamGetInt(',') == 1) fix = true;           // fix status
+    streamSkipUntil(',');                             // UTC date & Time
+    *lat = streamGetFloat(',');                       // Latitude
+    *lon = streamGetFloat(',');                       // Longitude
+    if (alt != NULL) *alt = streamGetFloat(',');      // MSL Altitude
+    if (speed != NULL) *speed = streamGetFloat(',');  // Speed Over Ground
+    streamSkipUntil(',');                             // Course Over Ground
+    streamSkipUntil(',');                             // Fix Mode
+    streamSkipUntil(',');                             // Reserved1
+    streamSkipUntil(',');  // Horizontal Dilution Of Precision
+    streamSkipUntil(',');  // Position Dilution Of Precision
+    streamSkipUntil(',');  // Vertical Dilution Of Precision
+    streamSkipUntil(',');  // Reserved2
+    if (vsat != NULL) *vsat = streamGetInt(',');  // GNSS Satellites in View
+    if (usat != NULL) *usat = streamGetInt(',');  // GNSS Satellites Used
+    streamSkipUntil(',');                         // GLONASS Satellites Used
+    streamSkipUntil(',');                         // Reserved3
+    streamSkipUntil(',');                         // C/N0 max
+    streamSkipUntil(',');                         // HPA
+    streamSkipUntil('\n');                        // VPA
 
     waitResponse();
 
     return fix;
   }
-
-  /*
-   * Time functions
-   */
- public:
   // get GPS time
-  bool getGPSTime(int* year, int* month, int* day, int* hour, int* minute,
-                  int* second) {
+  bool getGPSTimeImpl(int* year, int* month, int* day, int* hour, int* minute,
+                      int* second) {
     bool fix = false;
     char chr_buffer[12];
     sendAT(GF("+CGNSINF"));
@@ -499,7 +485,7 @@ class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
           break;
       }
     }
-    stream.readStringUntil('\n');
+    streamSkipUntil('\n');
     waitResponse();
 
     if (fix) {
@@ -510,10 +496,15 @@ class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
   }
 
   /*
-   * Battery & temperature functions
+   * Time functions
+   */
+  // Can follow CCLK as per template
+
+  /*
+   * Battery functions
    */
  protected:
-  float getTemperatureImpl() TINY_GSM_ATTR_NOT_AVAILABLE;
+  // Follows all battery functions per template
 
   /*
    * Client related functions
@@ -541,7 +532,7 @@ class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
     stream.flush();
     if (waitResponse(GF(GSM_NL "DATA ACCEPT:")) != 1) { return 0; }
     streamSkipUntil(',');  // Skip mux
-    return stream.readStringUntil('\n').toInt();
+    return streamGetInt('\n');
   }
 
   size_t modemRead(size_t size, uint8_t mux) {
@@ -554,9 +545,9 @@ class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
 #endif
     streamSkipUntil(',');  // Skip Rx mode 2/normal or 3/HEX
     streamSkipUntil(',');  // Skip mux
-    int len_requested = stream.readStringUntil(',').toInt();
+    int len_requested = streamGetInt(',');
     //  ^^ Requested number of data bytes (1-1460 bytes)to be read
-    int len_confirmed = stream.readStringUntil('\n').toInt();
+    int len_confirmed = streamGetInt('\n');
     // ^^ Confirmed number of data bytes to be read, which may be less than
     // requested. 0 indicates that no data can be read. This is actually be the
     // number of bytes that will be remaining after the read
@@ -595,7 +586,7 @@ class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
     if (waitResponse(GF("+CIPRXGET:")) == 1) {
       streamSkipUntil(',');  // Skip mode 4
       streamSkipUntil(',');  // Skip mux
-      result = stream.readStringUntil('\n').toInt();
+      result = streamGetInt('\n');
       waitResponse();
     }
     DBG("### Available:", result, "on", mux);
@@ -644,6 +635,9 @@ class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
           index = 2;
           goto finish;
         } else if (r3 && data.endsWith(r3)) {
+          if (r3 == GFP(GSM_CME_ERROR)) {
+            streamSkipUntil('\n');  // Read out the error
+          }
           index = 3;
           goto finish;
         } else if (r4 && data.endsWith(r4)) {
@@ -653,9 +647,9 @@ class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
           index = 5;
           goto finish;
         } else if (data.endsWith(GF(GSM_NL "+CIPRXGET:"))) {
-          String mode = stream.readStringUntil(',');
-          if (mode.toInt() == 1) {
-            int mux = stream.readStringUntil('\n').toInt();
+          int mode = streamGetInt(',');
+          if (mode == 1) {
+            int mux = streamGetInt('\n');
             if (mux >= 0 && mux < TINY_GSM_MUX_COUNT && sockets[mux]) {
               sockets[mux]->got_data = true;
             }
@@ -665,8 +659,8 @@ class TinyGsmSim7000 : public TinyGsmModem<TinyGsmSim7000, READ_AND_CHECK_SIZE,
             data += mode;
           }
         } else if (data.endsWith(GF(GSM_NL "+RECEIVE:"))) {
-          int mux = stream.readStringUntil(',').toInt();
-          int len = stream.readStringUntil('\n').toInt();
+          int mux = streamGetInt(',');
+          int len = streamGetInt('\n');
           if (mux >= 0 && mux < TINY_GSM_MUX_COUNT && sockets[mux]) {
             sockets[mux]->got_data       = true;
             sockets[mux]->sock_available = len;

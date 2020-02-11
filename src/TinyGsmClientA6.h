@@ -14,7 +14,13 @@
 
 #define TINY_GSM_MUX_COUNT 8
 
-#include "TinyGsmCommon.h"
+#include "TinyGsmBattery.tpp"
+#include "TinyGsmCalling.tpp"
+#include "TinyGsmGPRS.tpp"
+#include "TinyGsmModem.tpp"
+#include "TinyGsmSMS.tpp"
+#include "TinyGsmTCP.tpp"
+#include "TinyGsmTime.tpp"
 
 #define GSM_NL "\r\n"
 static const char GSM_OK[] TINY_GSM_PROGMEM        = "OK" GSM_NL;
@@ -32,8 +38,20 @@ enum RegStatus {
 };
 
 class TinyGsmA6
-    : public TinyGsmModem<TinyGsmA6, NO_MODEM_BUFFER, TINY_GSM_MUX_COUNT> {
-  friend class TinyGsmModem<TinyGsmA6, NO_MODEM_BUFFER, TINY_GSM_MUX_COUNT>;
+    : public TinyGsmModem<TinyGsmA6>,
+      public TinyGsmGPRS<TinyGsmA6>,
+      public TinyGsmTCP<TinyGsmA6, NO_MODEM_BUFFER, TINY_GSM_MUX_COUNT>,
+      public TinyGsmCalling<TinyGsmA6>,
+      public TinyGsmSMS<TinyGsmA6>,
+      public TinyGsmTime<TinyGsmA6>,
+      public TinyGsmBattery<TinyGsmA6> {
+  friend class TinyGsmModem<TinyGsmA6>;
+  friend class TinyGsmGPRS<TinyGsmA6>;
+  friend class TinyGsmTCP<TinyGsmA6, NO_MODEM_BUFFER, TINY_GSM_MUX_COUNT>;
+  friend class TinyGsmCalling<TinyGsmA6>;
+  friend class TinyGsmSMS<TinyGsmA6>;
+  friend class TinyGsmTime<TinyGsmA6>;
+  friend class TinyGsmBattery<TinyGsmA6>;
 
   /*
    * Inner Client
@@ -70,17 +88,9 @@ class TinyGsmA6
       }
       return sock_connected;
     }
-    int connect(IPAddress ip, uint16_t port, int timeout_s) {
-      return connect(TinyGsmStringFromIp(ip).c_str(), port, timeout_s);
-    }
-    int connect(const char* host, uint16_t port) override {
-      return connect(host, port, 75);
-    }
-    int connect(IPAddress ip, uint16_t port) override {
-      return connect(ip, port, 75);
-    }
+    TINY_GSM_CLIENT_CONNECT_OVERRIDES
 
-    void stop(uint32_t maxWaitMs) {
+    virtual void stop(uint32_t maxWaitMs) {
       TINY_GSM_YIELD();
       at->sendAT(GF("+CIPCLOSE="), mux);
       sock_connected = false;
@@ -158,18 +168,6 @@ class TinyGsmA6
     return waitResponse() == 1;
   }
 
-  bool thisHasSSL() {
-    return false;
-  }
-
-  bool thisHasWifi() {
-    return false;
-  }
-
-  bool thisHasGPRS() {
-    return true;
-  }
-
   /*
    * Power functions
    */
@@ -190,19 +188,6 @@ class TinyGsmA6
   bool sleepEnableImpl(bool enable = true) TINY_GSM_ATTR_NOT_AVAILABLE;
 
   /*
-   * SIM card functions
-   */
- protected:
-  String getSimCCIDImpl() {
-    sendAT(GF("+CCID"));
-    if (waitResponse(GF(GSM_NL "+SCID: SIM Card ID:")) != 1) { return ""; }
-    String res = stream.readStringUntil('\n');
-    waitResponse();
-    res.trim();
-    return res;
-  }
-
-  /*
    * Generic network functions
    */
  public:
@@ -214,6 +199,16 @@ class TinyGsmA6
   bool isNetworkConnectedImpl() {
     RegStatus s = getRegistrationStatus();
     return (s == REG_OK_HOME || s == REG_OK_ROAMING);
+  }
+
+  String getLocalIPImpl() {
+    sendAT(GF("+CIFSR"));
+    String res;
+    if (waitResponse(10000L, res) != 1) { return ""; }
+    res.replace(GSM_NL "OK" GSM_NL, "");
+    res.replace(GSM_NL, "");
+    res.trim();
+    return res;
   }
 
   /*
@@ -272,15 +267,14 @@ class TinyGsmA6
   }
 
   /*
-   * IP Address functions
+   * SIM card functions
    */
  protected:
-  String getLocalIPImpl() {
-    sendAT(GF("+CIFSR"));
-    String res;
-    if (waitResponse(10000L, res) != 1) { return ""; }
-    res.replace(GSM_NL "OK" GSM_NL, "");
-    res.replace(GSM_NL, "");
+  String getSimCCIDImpl() {
+    sendAT(GF("+CCID"));
+    if (waitResponse(GF(GSM_NL "+SCID: SIM Card ID:")) != 1) { return ""; }
+    String res = stream.readStringUntil('\n');
+    waitResponse();
     res.trim();
     return res;
   }
@@ -314,7 +308,7 @@ class TinyGsmA6
   }
 
   // 0-9,*,#,A,B,C,D
-  bool dtmfSendImpl(char cmd, unsigned duration_ms = 100) {
+  bool dtmfSendImpl(char cmd, uint8_t duration_ms = 100) {
     duration_ms = constrain(duration_ms, 100, 1000);
 
     // The duration parameter is not working, so we simulate it using delay..
@@ -362,10 +356,10 @@ class TinyGsmA6
     sendAT(GF("+CUSD=1,\""), code, GF("\",15"));
     if (waitResponse(10000L) != 1) { return ""; }
     if (waitResponse(GF(GSM_NL "+CUSD:")) != 1) { return ""; }
-    stream.readStringUntil('"');
+    streamSkipUntil('"');
     String hex = stream.readStringUntil('"');
-    stream.readStringUntil(',');
-    int dcs = stream.readStringUntil('\n').toInt();
+    streamSkipUntil(',');
+    int dcs = streamGetInt('\n');
 
     if (dcs == 15) {
       return TinyGsmDecodeHex7bit(hex);
@@ -377,18 +371,6 @@ class TinyGsmA6
   }
 
   /*
-   * Location functions
-   */
- protected:
-  String getGsmLocationImpl() TINY_GSM_ATTR_NOT_AVAILABLE;
-
-  /*
-   * GPS location functions
-   */
- public:
-  // No functions of this type supported
-
-  /*
    * Time functions
    */
  protected:
@@ -396,7 +378,7 @@ class TinyGsmA6
   // Note - the clock probably has to be set manaually first
 
   /*
-   * Battery & temperature functions
+   * Battery functions
    */
  protected:
   uint16_t getBattVoltageImpl() TINY_GSM_ATTR_NOT_AVAILABLE;
@@ -407,7 +389,7 @@ class TinyGsmA6
     if (waitResponse(GF(GSM_NL "+CBC:")) != 1) { return false; }
     streamSkipUntil(',');  // Skip battery charge status
     // Read battery charge level
-    int res = stream.readStringUntil('\n').toInt();
+    int res = streamGetInt('\n');
     // Wait for final OK
     waitResponse();
     return res;
@@ -418,15 +400,13 @@ class TinyGsmA6
                         uint16_t& milliVolts) {
     sendAT(GF("+CBC?"));
     if (waitResponse(GF(GSM_NL "+CBC:")) != 1) { return false; }
-    chargeState = stream.readStringUntil(',').toInt();
-    percent     = stream.readStringUntil('\n').toInt();
+    chargeState = streamGetInt(',');
+    percent     = streamGetInt('\n');
     milliVolts  = 0;
     // Wait for final OK
     waitResponse();
     return true;
   }
-
-  float getTemperatureImpl() TINY_GSM_ATTR_NOT_AVAILABLE;
 
   /*
    * Client related functions
@@ -439,7 +419,7 @@ class TinyGsmA6
 
     sendAT(GF("+CIPSTART="), GF("\"TCP"), GF("\",\""), host, GF("\","), port);
     if (waitResponse(timeout_ms, GF(GSM_NL "+CIPNUM:")) != 1) { return false; }
-    int newMux = stream.readStringUntil('\n').toInt();
+    int newMux = streamGetInt('\n');
 
     int rsp = waitResponse((timeout_ms - (millis() - startMillis)),
                            GF("CONNECT OK" GSM_NL), GF("CONNECT FAIL" GSM_NL),
@@ -507,6 +487,9 @@ class TinyGsmA6
           index = 2;
           goto finish;
         } else if (r3 && data.endsWith(r3)) {
+          if (r3 == GFP(GSM_CME_ERROR)) {
+            streamSkipUntil('\n');  // Read out the error
+          }
           index = 3;
           goto finish;
         } else if (r4 && data.endsWith(r4)) {
@@ -516,8 +499,8 @@ class TinyGsmA6
           index = 5;
           goto finish;
         } else if (data.endsWith(GF("+CIPRCV:"))) {
-          int mux      = stream.readStringUntil(',').toInt();
-          int len      = stream.readStringUntil(',').toInt();
+          int mux      = streamGetInt(',');
+          int len      = streamGetInt(',');
           int len_orig = len;
           if (len > sockets[mux]->rx.free()) {
             DBG("### Buffer overflow: ", len, "->", sockets[mux]->rx.free());
@@ -532,7 +515,7 @@ class TinyGsmA6
           }
           data = "";
         } else if (data.endsWith(GF("+TCPCLOSED:"))) {
-          int mux = stream.readStringUntil('\n').toInt();
+          int mux = streamGetInt('\n');
           if (mux >= 0 && mux < TINY_GSM_MUX_COUNT) {
             sockets[mux]->sock_connected = false;
           }
