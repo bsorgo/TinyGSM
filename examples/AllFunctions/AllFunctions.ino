@@ -42,7 +42,7 @@
 //SoftwareSerial SerialAT(2, 3); // RX, TX
 
 // See all AT commands, if wanted
-//#define DUMP_AT_COMMANDS
+// #define DUMP_AT_COMMANDS
 
 // Define the serial console for debug prints, if needed
 #define TINY_GSM_DEBUG SerialMon
@@ -68,8 +68,8 @@
 #define GSM_PIN ""
 
 // Set phone numbers, if you want to test SMS and Calls
-//#define SMS_TARGET  "+380xxxxxxxxx"
-//#define CALL_TARGET "+380xxxxxxxxx"
+// #define SMS_TARGET  "+380xxxxxxxxx"
+// #define CALL_TARGET "+380xxxxxxxxx"
 
 // Your GPRS credentials, if any
 const char apn[]  = "YourAPN";
@@ -126,7 +126,7 @@ void setup() {
 
   // Set GSM module baud rate
   TinyGsmAutoBaud(SerialAT,GSM_AUTOBAUD_MIN,GSM_AUTOBAUD_MAX);
-  //SerialAT.begin(9600);
+  //SerialAT.begin(115200);
   delay(3000);
 }
 
@@ -174,7 +174,7 @@ void loop() {
 #endif
 
   DBG("Waiting for network...");
-  if (!modem.waitForNetwork()) {
+  if (!modem.waitForNetwork(600000L)) {
     delay(10000);
     return;
   }
@@ -239,8 +239,15 @@ void loop() {
   DBG("SMS:", res ? "OK" : "fail");
 
   // This is only supported on SIMxxx series
-  res = modem.sendSMS_UTF16(SMS_TARGET, u"Привіііт!", 9);
-  DBG("UTF16 SMS:", res ? "OK" : "fail");
+  res = modem.sendSMS_UTF8_begin(SMS_TARGET);
+  if(res) {
+    auto stream = modem.sendSMS_UTF8_stream();
+    stream.print(F("Привіііт! Print number: "));
+    stream.print(595);
+    res = modem.sendSMS_UTF8_end();
+  }
+  DBG("UTF8 SMS:", res ? "OK" : "fail");
+
 #endif
 
 #if TINY_GSM_TEST_CALL && defined(CALL_TARGET)
